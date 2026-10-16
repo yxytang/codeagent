@@ -42,10 +42,22 @@ def make_handler(engine, settings):
             route = parsed.path
             try:
                 if route == "/api/state":
-                    return self.json_response({"runs": engine.list_runs(), "settings": settings.snapshot(), "skills": engine.skills().catalog(), "memory_fts": engine.memory.fts, "default_workspace": str(engine.project_dir)})
+                    return self.json_response({"runs": engine.list_runs(), "settings": settings.snapshot(), "skills": engine.skills().catalog(), "memory_fts": engine.memory.fts, "memory_stats": engine.memory.stats(), "default_workspace": str(engine.project_dir)})
+                if route == "/api/skills":
+                    query = parse_qs(parsed.query)
+                    return self.json_response(engine.skills().preview(query.get("name", [""])[0]))
                 if route == "/api/memory":
                     query = parse_qs(parsed.query)
                     return self.json_response(engine.memory.search(query.get("q", [""])[0], query.get("scope", [None])[0], raw=query.get("raw", ["0"])[0] == "1"))
+                if route.startswith("/api/memory/"):
+                    parts = route.split("/")
+                    if len(parts) != 4 or not parts[3].isascii() or not parts[3].isdigit():
+                        raise ValueError("记忆 ID 无效")
+                    identifier = int(parts[3])
+                    if not 0 < identifier < 2 ** 63:
+                        raise ValueError("记忆 ID 无效")
+                    query = parse_qs(parsed.query)
+                    return self.json_response(engine.memory.get(identifier, raw=query.get("raw", ["0"])[0] == "1"))
                 if route.startswith("/api/runs/"):
                     return self.json_response(engine.get_run(route.rsplit("/", 1)[-1]))
                 if route.startswith("/api/"):
@@ -82,6 +94,27 @@ def make_handler(engine, settings):
                 route = urlparse(self.path).path
                 if route == "/api/settings":
                     return self.json_response(settings.update(data))
+                if route == "/api/memory":
+                    scope, title, summary = (data.get(key) for key in ("scope", "title", "summary"))
+                    if not isinstance(scope, str) or not scope.strip():
+                        raise ValueError("项目路径必须是现有绝对目录")
+                    project = Path(scope)
+                    if not project.is_absolute() or not project.is_dir():
+                        raise ValueError("项目路径必须是现有绝对目录")
+                    if not isinstance(title, str) or not title.strip() or not 1 <= len(title) <= 300:
+                        raise ValueError("标题须为 1–300 个字符")
+                    if not isinstance(summary, str) or not summary.strip() or not 1 <= len(summary) <= 8000:
+                        raise ValueError("笔记内容须为 1–8000 个字符")
+                    identifier = engine.memory.add(str(project.resolve()), title.strip(), summary.strip(), kind="note", agent="user")
+                    return self.json_response({"memory": engine.memory.get(identifier)}, 201)
+                if route.startswith("/api/memory/") and route.endswith("/delete"):
+                    parts = route.split("/")
+                    if len(parts) != 5 or not parts[3].isascii() or not parts[3].isdigit():
+                        raise ValueError("记忆 ID 无效")
+                    identifier = int(parts[3])
+                    if not 0 < identifier < 2 ** 63:
+                        raise ValueError("记忆 ID 无效")
+                    return self.json_response({"deleted": engine.memory.delete_note(identifier)})
                 if route == "/api/runs":
                     return self.json_response(engine.create(data.get("objective", ""), data.get("workspace", ""), data.get("mode", "live"), data.get("allow_commands", False)), 201)
                 if route.startswith("/api/runs/") and route.endswith(("/cancel", "/apply")):

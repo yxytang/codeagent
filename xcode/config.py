@@ -18,9 +18,8 @@ class Settings:
             "base_url": os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
             "model": os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
             "max_workers": 3,
-            "max_steps": 16,
+            "max_steps": 40,
             "max_tasks": 8,
-            "max_depth": 2,
             "timeout": 45,
             "context_chars": 48000,
             "allowed_commands": [],
@@ -48,7 +47,7 @@ class Settings:
                 raise ValueError("base_url 必须是无凭据、无查询参数的 http(s) URL")
             if not isinstance(values["model"], str) or not values["model"].strip():
                 raise ValueError("模型名不能为空")
-            for key, low, high in (("max_workers", 1, 6), ("max_steps", 2, 40), ("max_tasks", 1, 12), ("max_depth", 1, 3), ("timeout", 5, 120), ("context_chars", 8000, 120000)):
+            for key, low, high in (("max_workers", 1, 6), ("max_steps", 2, 40), ("max_tasks", 1, 12), ("timeout", 5, 120), ("context_chars", 8000, 120000)):
                 values[key] = int(values[key])
                 if not low <= values[key] <= high:
                     raise ValueError(f"{key} 必须在 {low}–{high} 之间")

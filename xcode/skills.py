@@ -77,3 +77,9 @@ class SkillRegistry:
             if entry["name"] == name and entry["enabled"]:
                 return entry["body"]
         raise ValueError("技能不存在或已禁用")
+
+    def preview(self, name):
+        for entry in self.entries:
+            if entry["name"] == name:
+                return {key: entry[key] for key in ("name", "description", "tools", "enabled", "body", "path")}
+        raise ValueError("技能不存在")

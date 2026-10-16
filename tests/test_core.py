@@ -80,15 +80,21 @@ class WorkspaceTests(TemporaryCase):
 
 
 class PlanTests(unittest.TestCase):
-    def test_cycle_missing_ids_and_depth_are_rejected(self):
+    def test_cycle_and_missing_ids_are_rejected(self):
         plans = [
             [{"id":"a","objective":"a","depends_on":["b"]}, {"id":"b","objective":"b","depends_on":["a"]}],
             [{"id":"a","objective":"a","depends_on":["missing"]}],
-            [{"id":"a","objective":"a"}, {"id":"b","objective":"b","depends_on":["a"]}, {"id":"c","objective":"c","depends_on":["b"]}],
         ]
         for tasks in plans:
             with self.subTest(tasks=tasks), self.assertRaises(ValueError):
-                validate_plan({"tasks":tasks}, max_depth=2)
+                validate_plan({"tasks":tasks})
+
+    def test_dependency_chain_can_use_full_task_budget(self):
+        tasks = [{"id": f"task{i}", "objective": "task", "depends_on": [f"task{i-1}"] if i else []} for i in range(12)]
+        validated = validate_plan({"tasks": tasks}, max_tasks=12)
+        self.assertEqual([task["depth"] for task in validated], list(range(1, 13)))
+        with self.assertRaises(ValueError):
+            validate_plan({"tasks": tasks}, max_tasks=8)
 
     def test_independent_writes_conflict_but_dependencies_supersede(self):
         tasks = validate_plan({"tasks":[{"id":"a","objective":"a"}, {"id":"b","objective":"b"}, {"id":"c","objective":"c","depends_on":["a"]}]})
@@ -255,6 +261,23 @@ class EngineTests(TemporaryCase):
         self.assertEqual(mocked.call_count,3)
         self.assertEqual(run["patches"][0]["path"],"hello.py")
         self.assertFalse((engine.project_dir / "hello.py").exists())
+
+    def test_read_progress_survives_context_compaction(self):
+        engine = self.engine()
+        engine.settings.update({"api_key": "test", "max_workers": 1})
+        (engine.project_dir / "hello.py").write_text("VALUE = 1\n")
+        responses = [
+            ({"role": "assistant", "content": json.dumps({"tasks": [{"id": "writer", "objective": "update hello"}]})}, {}),
+            ({"role": "assistant", "tool_calls": [{"id": "read", "function": {"name": "read_file", "arguments": json.dumps({"path": "hello.py"})}}]}, {}),
+            ({"role": "assistant", "content": "已检查，无需修改"}, {}),
+        ]
+        with patch.object(DeepSeekProvider, "complete", side_effect=responses) as mocked, patch.object(engine, "compact", side_effect=lambda identifier, agent_id, messages, scope, limit: messages[:2]):
+            run = engine.create("inspect hello", str(engine.project_dir))
+            run = self.wait_done(engine, run["id"])
+        self.assertEqual(run["status"], "ready", run.get("error"))
+        progress = mocked.call_args_list[2].args[0][-1]["content"]
+        self.assertIn("hello.py", progress)
+        self.assertIn('"remaining_rounds": 39', progress)
 
     def test_compaction_keeps_tool_call_pairing_and_saves_raw(self):
         engine=self.engine();run=engine.create("demo",mode="demo");engine.cancel(run["id"]);self.wait_done(engine,run["id"])
