@@ -167,7 +167,7 @@ class ProviderTests(unittest.TestCase):
             pass
         message = {"role":"assistant", "content":None, "reasoning_content":"thinking", "tool_calls":[{"id":"call1", "type":"function", "function":{"name":"list_files", "arguments":"{}"}}]}
         payload = {"choices":[{"message":message}], "usage":{"total_tokens":23}}
-        with patch("urllib.request.urlopen", return_value=Response(json.dumps(payload).encode())) as request:
+        with patch("xcode.provider.model_urlopen", return_value=Response(json.dumps(payload).encode())) as request:
             result, usage = DeepSeekProvider(settings).complete([{"role":"user","content":"task"}], [{"type":"function"}])
             sent = request.call_args.args[0]
             self.assertEqual(sent.full_url, "https://api.deepseek.com/v1/chat/completions")
@@ -177,7 +177,7 @@ class ProviderTests(unittest.TestCase):
 
     def test_cancel_prevents_network_call(self):
         cancel=threading.Event();cancel.set()
-        with patch("urllib.request.urlopen") as request, self.assertRaises(Cancelled):
+        with patch("xcode.provider.model_urlopen") as request, self.assertRaises(Cancelled):
             DeepSeekProvider({"api_key":"secret", "base_url":"https://api.deepseek.com"}).complete([], cancel=cancel)
         request.assert_not_called()
 

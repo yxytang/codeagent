@@ -2,6 +2,7 @@ __pycache__/
 *.py[cod]
 .venv/
 .xcode/
+.test-tmp/
 .env
 *.egg-info/
 build/

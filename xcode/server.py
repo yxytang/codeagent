@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import mimetypes
 import threading
@@ -10,6 +11,7 @@ from urllib.parse import parse_qs, urlparse
 
 from .config import Settings
 from .engine import Engine
+from .hooks import EVENTS
 
 
 STATIC = Path(__file__).parent / "static"
@@ -42,7 +44,7 @@ def make_handler(engine, settings):
             route = parsed.path
             try:
                 if route == "/api/state":
-                    return self.json_response({"runs": engine.list_runs(), "settings": settings.snapshot(), "skills": engine.skills().catalog(), "memory_fts": engine.memory.fts, "memory_stats": engine.memory.stats(), "default_workspace": str(engine.project_dir)})
+                    return self.json_response({"runs": engine.list_runs(), "settings": settings.snapshot(), "skills": engine.skills().catalog(), "hooks": engine.hooks.catalog(), "hook_events": list(EVENTS), "memory_fts": engine.memory.fts, "memory_stats": engine.memory.stats(), "default_workspace": str(engine.project_dir)})
                 if route == "/api/skills":
                     query = parse_qs(parsed.query)
                     return self.json_response(engine.skills().preview(query.get("name", [""])[0]))
@@ -94,6 +96,13 @@ def make_handler(engine, settings):
                 route = urlparse(self.path).path
                 if route == "/api/settings":
                     return self.json_response(settings.update(data))
+                if route == "/api/models":
+                    return self.json_response(settings.upsert_model(data))
+                if route.startswith("/api/models/") and route.endswith("/delete"):
+                    parts = route.split("/")
+                    if len(parts) != 5 or not parts[3]:
+                        raise ValueError("模型连接 ID 无效")
+                    return self.json_response(settings.delete_model(parts[3]))
                 if route == "/api/memory":
                     scope, title, summary = (data.get(key) for key in ("scope", "title", "summary"))
                     if not isinstance(scope, str) or not scope.strip():
@@ -116,7 +125,7 @@ def make_handler(engine, settings):
                         raise ValueError("记忆 ID 无效")
                     return self.json_response({"deleted": engine.memory.delete_note(identifier)})
                 if route == "/api/runs":
-                    return self.json_response(engine.create(data.get("objective", ""), data.get("workspace", ""), data.get("mode", "live"), data.get("allow_commands", False)), 201)
+                    return self.json_response(engine.create(data.get("objective", ""), data.get("workspace", ""), data.get("mode", "live"), data.get("allow_commands", False), data.get("model_profile_id")), 201)
                 if route.startswith("/api/runs/") and route.endswith(("/cancel", "/apply")):
                     identifier, action = route.split("/")[-2:]
                     return self.json_response(engine.cancel(identifier) if action == "cancel" else engine.apply(identifier))
@@ -128,11 +137,22 @@ def make_handler(engine, settings):
                     return self.json_response({"tools": engine.mcp_probe(config)})
                 self.json_response({"error": "接口不存在"}, 404)
             except (ValueError, OSError, KeyError, TypeError, RuntimeError, TimeoutError) as exc:
-                key = settings.snapshot(secret=True)["api_key"]
-                error = str(exc).replace(key, "[redacted]") if key else str(exc)
+                error = settings.redact(str(exc))
                 self.json_response({"error": error[:1200]}, 400)
 
     return Handler
+
+
+def load_hook_modules(registry, module_names):
+    """Explicit service-side imports only; there is no HTTP code-loading API."""
+    for module_name in module_names:
+        if not isinstance(module_name, str) or not module_name or any(not part.isidentifier() for part in module_name.split(".")):
+            raise ValueError("Hook 模块必须是 Python 模块名，例如 examples.hooks_example")
+        module = importlib.import_module(module_name)
+        register = getattr(module, "register_hooks", None)
+        if not callable(register):
+            raise ValueError(f"Hook 模块 {module_name} 需要定义 register_hooks(registry)")
+        register(registry)
 
 
 def main():
@@ -140,6 +160,7 @@ def main():
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--project", type=Path, default=Path.cwd())
     parser.add_argument("--data-dir", type=Path)
+    parser.add_argument("--hooks-module", action="append", default=[], metavar="MODULE", help="加载可信 Python 模块的 register_hooks(registry)，可重复指定")
     args = parser.parse_args()
     project = args.project.resolve()
     if not project.is_dir():
@@ -147,10 +168,14 @@ def main():
     data_dir = (args.data_dir or project / ".xcode").resolve()
     settings = Settings(data_dir)
     engine = Engine(data_dir, project, settings)
+    try:
+        load_hook_modules(engine.hooks, args.hooks_module)
+    except Exception as exc:
+        parser.error("Hook 加载失败：" + settings.redact(str(exc)))
     server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(engine, settings))
     server.daemon_threads = True
     print(f"XCode console: http://127.0.0.1:{server.server_port}", flush=True)
-    print("DeepSeek-compatible API | local-only | Ctrl+C to stop", flush=True)
+    print("Multi-model Chat Completions gateway | local-only | Ctrl+C to stop", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

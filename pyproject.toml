@@ -11,9 +11,10 @@ dependencies = []
 
 [project.scripts]
 xcode = "xcode.server:main"
+xcode-benchmark = "benchmarks.__main__:main"
 
 [tool.setuptools.packages.find]
-include = ["xcode*"]
+include = ["xcode*", "benchmarks*"]
 
 [tool.setuptools.package-data]
 xcode = ["static/*"]
